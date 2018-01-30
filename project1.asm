@@ -66,16 +66,16 @@ soaktemp:	  ds 2
 soaktime:	  ds 2
 reflowtemp:	  ds 2
 reflowtime:	  ds 2
-x: ds 4
-y: ds 4
-bcd: ds 5
-result: ds 4
-hun: ds 1
-hun1: ds 1
-hun2: ds 1
-hun3: ds 1
-hunsec: ds 1
-switch: ds 1
+x: 		ds 4		
+y: 		ds 4
+bcd: 		ds 5
+result: 	ds 4
+hun: 		ds 1
+hun1: 		ds 1
+hun2: 		ds 1
+hun3: 		ds 1
+hunsec: 	ds 1
+switch: 	ds 1
 
 
 
@@ -327,8 +327,8 @@ main:
     mov P0M1, #0
     setb EA 
     setb half_seconds_flag
-    mov soaktemp, #0x50
-    mov soaktime, #0
+    mov soaktemp, #0x50		;the oven starts at 50 C
+    mov soaktime, #0		
     mov reflowtemp, #0
     mov reflowtime, #0
     mov hun, #0
@@ -339,10 +339,10 @@ main:
     
     ;SET SOAK TEMPERATURE
 	redo:
-    Set_Cursor(1,1)
+    Set_Cursor(1,1)			;
     Send_Constant_String(#stemp)
     setsoaktemp:
-    buttonpress(ADD_ONE, scroll)
+    buttonpress(ADD_ONE, scroll)	;ADD_ONE button is pressed, if pressed, jump to scroll
     increment5(soaktemp,hun,#5)
     scroll:
     Set_Cursor(1,14)
