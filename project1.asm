@@ -76,6 +76,9 @@ hun2: ds 1
 hun3: ds 1
 hunsec: ds 1
 switch: ds 1
+currenttemp: ds 1
+pwm:		  ds 2
+state: ds 1
 
 
 
@@ -122,9 +125,11 @@ selectno:			    db '    yes  > no < ',0
 save:					db '  SAVE CHANGES? ',0
 clear:					db '                ',0
 otemp:					db '   0xxC  xxxs   ',0
-state1dis:				db '  RAMP TO SOAK	',0
+state1dis:				db '  RAMP TO SOAK  ',0
 state2dis:				db '      SOAK      ',0
 state3dis:				db ' RAMP TO REFLOW ',0 
+state4dis:				db '     REFLOW     ',0
+state5dis:				db '      COOL      ',0
 
 
 ;SET UP TIMERS!!!!!!!!!!!!!! (LAB 2)
@@ -190,10 +195,19 @@ Timer2_ISR:
 	
 Inc_Done:
 	; Check if half second has passed
+	clr c
+	
+	mov a, count1ms+0
+	subb a, pwm+0
+	mov a, count1ms+1
+	subb a, pwm+1
+	mov P0.2, c
+	
+	
 	mov a, Count1ms+0
-	cjne a, #low(1000), Timer2_ISR_done ; Warning: this instruction changes the carry flag!
+	cjne a, #low(250), Timer2_ISR_done ; Warning: this instruction changes the carry flag!
 	mov a, Count1ms+1
-	cjne a, #high(1000), Timer2_ISR_done
+	cjne a, #high(250), Timer2_ISR_done
 	; 500 milliseconds have passed.  Set a flag so the main program knows
 	setb half_seconds_flag ; Let the main program know half second had passed
 	increment1(second, hunsec, #1)
@@ -327,18 +341,24 @@ main:
     mov P0M1, #0
     setb EA 
     setb half_seconds_flag
-    mov soaktemp, #0x50
+    mov soaktemp, #0x30
     mov soaktime, #0
     mov reflowtemp, #0
     mov reflowtime, #0
     mov hun, #0
     mov hun1, #0
-    mov hun2, #1
+    mov hun2, #0
     mov hun3, #0
-    
+    mov pwm+0, #low(0) 		;initialize pwm to 0% 
+	mov pwm+1, #high(0)
+	mov state, #0x1
     
     ;SET SOAK TEMPERATURE
 	redo:
+	Set_Cursor(1,1)
+	Send_Constant_String(#clear)
+	Set_Cursor(2,1)
+	Send_Constant_String(#clear)
     Set_Cursor(1,1)
     Send_Constant_String(#stemp)
     setsoaktemp:
@@ -433,23 +453,12 @@ main:
     mov second, #0
     
     
-forever:
-    clr CE_ADC
-	mov R0, #00000001B ; Start bit:1
-	lcall DO_SPI_G
-	mov R0, #10000000B ; Single ended, read channel 0
-	lcall DO_SPI_G
-	mov a, R1 ; R1 contains bits 8 and 9
-	anl a, #00000011B ; We need only the two least significant bits
-	mov Result+1, a ; Save result high.
-	mov R0, #55H ; It doesn't matter what we transmit...
-	lcall DO_SPI_G
-	mov Result, R1 ; R1 contains bits 0 to 7. Save result low.
-	setb CE_ADC
-	lcall Delay
+    forever1:
+	lcall forever
 	
-	;RETRIEVING TEMPERATURE OF OVEN
-	lcall Do_Something_With_Result
+
+	mov a, state
+	cjne a, #1, soak
 	
 	;USING TIMER 2 FOR BAKE CLOCK
 	Set_Cursor(1,11)
@@ -464,35 +473,149 @@ forever:
 	
 	;someone set up beeping for entering first state
 	
-	ramptosoak:
 	
 
 	;someone do pwm thingy here
+	mov pwm+0, #low(1000) ;100%duty cycle (500/500ms = 100%)
+	mov pwm+1, #high(1000) 
 
 	mov a, second			;safety case
 	cjne a, #0x60, not60
 	mov a, #0x50
 	subb a, bcd
 	jnc escape			;basically checking for overflow
-	
-	not60:
-	mov a, stemp		;passes safety check. or 60 seconds have not passes. now checking for ramp to soak temp set earlier
-	cjne a, bcd, ramptosoak
-	
-	
-	;add another beep for another state
-	soak:
-	
-	
-	
-	
-	
-	
-    sjmp forever 
-    
-    
-   escape:
+	sjmp not60
+	escape:
 	; someone turn of pwm temperatures here...
 	ljmp redo
 	ret
+	
+	not60:
+	mov a, soaktemp		;passes safety check. or 60 seconds have not passes. now checking for ramp to soak temp set earlier
+	cjne a, bcd, cont
+	
+	sjmp gogo
+	cont:
+	ljmp forever1
+	gogo:
+	mov state, #2
+	
+	
+	;add another beep for another state
+	
+	
+	mov second, #0
+	mov hunsec, #0
+	
+	soak:
+	mov a, state
+	cjne a, #2, ramptoreflow
+	Set_Cursor(1,11)
+    Display_BCD(second)
+    Set_Cursor(1,10)
+	mov a, hunsec
+	orl a, #0x30
+	lcall ?WriteData
+	Set_Cursor(2,1)
+	Send_Constant_String(#state2dis)
+	mov pwm+0, #low(250) 
+	mov pwm+1, #high(250)
+	
+
+	mov a, second
+	cjne a, soaktime, cont
+	
+	
+	mov state, #3
+	mov second, #0
+	mov hunsec, #0
+	
+	
+	ramptoreflow:
+	
+	mov a, state
+	cjne a, #3, reflow
+		Set_Cursor(2,1)
+	Send_Constant_String(#state3dis)
+	
+	mov pwm+0, #low(1000) ;100%duty cycle (500/500ms = 100%)
+	mov pwm+1, #high(1000) 
+	
+	
+	Set_Cursor(1,11)
+    Display_BCD(second)
+    Set_Cursor(1,10)
+	mov a, hunsec
+	orl a, #0x30
+	lcall ?WriteData
+	
+	mov a, bcd
+	cjne a, reflowtemp, cont1
+	
+	sjmp gogo1
+	cont1:
+	ljmp forever1
+	gogo1:
+
+	
+	
+	mov state, #4
+	mov second, #0
+	mov hunsec, #0
+	
+	
+	reflow:
+	
+	mov a, state
+	cjne a, #4, coolmike
+	Set_Cursor(2,1)
+	Send_Constant_String(#state4dis)
+	
+	mov pwm+0, #low(750) ;100%duty cycle (500/500ms = 100%)
+	mov pwm+1, #high(750) 
+	
+	
+	Set_Cursor(1,11)
+    Display_BCD(second)
+    Set_Cursor(1,10)
+	mov a, hunsec
+	orl a, #0x30
+	lcall ?WriteData
+	
+	mov a, second
+	cjne a, reflowtime, cont1
+	
+	mov state, #5
+	mov second, #0
+	mov hunsec, #0
+	
+	coolmike:
+					; clear whenever it reaches 30 celsius
+	Set_Cursor(2,1)
+	Send_Constant_String(#state5dis)
+	
+	mov pwm+0, #low(0) ;100%duty cycle (500/500ms = 100%)
+	mov pwm+1, #high(0) 
+	
+	
+	Set_Cursor(1,11)
+    Display_BCD(second)
+    Set_Cursor(1,10)
+	mov a, hunsec
+	orl a, #0x30
+	lcall ?WriteData
+	
+	mov a, bcd
+	cjne a, #0x30, cont2
+	
+	Set_Cursor(2,1)
+	Send_Constant_String(#clear)
+	Set_Cursor(1,1)
+	Send_Constant_String(#clear)
+	;add beep sounds for letting the person know that its cool enough, like 30 celcisu
+	cont2:
+    ljmp forever1 
+    
+    
+  
 	end
