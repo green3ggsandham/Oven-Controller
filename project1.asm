@@ -33,6 +33,7 @@ NEXT		  equ p2.4
 
 
 
+
 ; Reset vector
 org 0x0000
     ljmp main
@@ -79,6 +80,7 @@ switch: ds 1
 currenttemp: ds 1
 pwm:		  ds 2
 state: ds 1
+statealarm: ds 1
 
 
 
@@ -124,12 +126,14 @@ selectyes:			    db '  > yes <  no   ',0
 selectno:			    db '    yes  > no < ',0
 save:					db '  SAVE CHANGES? ',0
 clear:					db '                ',0
-otemp:					db '   0xxC  xxxs   ',0
+otemp:					db '   xxxC  xxxs   ',0
 state1dis:				db '  RAMP TO SOAK  ',0
 state2dis:				db '      SOAK      ',0
 state3dis:				db ' RAMP TO REFLOW ',0 
 state4dis:				db '     REFLOW     ',0
 state5dis:				db '      COOL      ',0
+coolenough:				db ' YOUVE GOT ONE  ',0
+coolenough1:			db '    COOL BOY    ',0
 
 
 ;SET UP TIMERS!!!!!!!!!!!!!! (LAB 2)
@@ -160,6 +164,9 @@ Timer0_ISR:
 	clr TF0  ; According to the data sheet this is done for us already.
 	jnb no_alarm, don
 	cpl SOUND_OUT ; Connect speaker to P3.7!
+	lcall delay
+	clr SOUND_OUT
+clr no_alarm
 	don:
 	reti
 
@@ -201,13 +208,13 @@ Inc_Done:
 	subb a, pwm+0
 	mov a, count1ms+1
 	subb a, pwm+1
-	mov P0.2, c
+	mov P0.3, c
 	
 	
 	mov a, Count1ms+0
-	cjne a, #low(250), Timer2_ISR_done ; Warning: this instruction changes the carry flag!
+	cjne a, #low(1000), Timer2_ISR_done ; Warning: this instruction changes the carry flag!
 	mov a, Count1ms+1
-	cjne a, #high(250), Timer2_ISR_done
+	cjne a, #high(1000), Timer2_ISR_done
 	; 500 milliseconds have passed.  Set a flag so the main program knows
 	setb half_seconds_flag ; Let the main program know half second had passed
 	increment1(second, hunsec, #1)
@@ -288,20 +295,26 @@ Do_Something_With_Result:
 	;CONVERT TO TEMPERATURE
 	mov x, Result
 	mov x+1, Result+1
-	;mov x+2, Result+2
-	load_y(410)
+	mov x+2, #0
+	mov x+3, #0
+	load_y(45)
 	lcall mul32
-	load_y(1023)
+	load_y(100)
 	lcall div32
-	load_y(273)
-	lcall sub32	
+	load_y(26)
+	lcall add32
+	;load_y(7016)
+	;lcall sub32
 	mov a, x
 	da a
 	lcall hex2bcd
 	
-	;LCD DISPLAY					
+	;LCD DISPLAY
+	Set_Cursor(1, 3)
+	Display_BCD(bcd+1)					
 	Set_Cursor(1, 5)
 	Display_BCD(bcd)
+
 	
 	;PUTTY DISPLAY
 	mov a, bcd+1
@@ -329,7 +342,13 @@ Do_Something_With_Result:
 ret
 
 
-
+beep:
+	setb SOUND_OUT
+    lcall delay
+    lcall delay
+    clr SOUND_OUT
+    lcall delay
+    ret
   
 
 main:
@@ -352,6 +371,10 @@ main:
     mov pwm+0, #low(0) 		;initialize pwm to 0% 
 	mov pwm+1, #high(0)
 	mov state, #0x1
+    mov statealarm, #1
+    clr no_alarm
+    clr SOUND_OUT
+    
     
     ;SET SOAK TEMPERATURE
 	redo:
@@ -365,14 +388,8 @@ main:
     buttonpress(ADD_ONE, scroll)
     increment5(soaktemp,hun,#5)
     scroll:
-    Set_Cursor(1,14)
-    Display_BCD(soaktemp)
-    Set_Cursor(1,13)
-	mov a, hun
-	orl a, #0x30
-	lcall ?WriteData
+    displayvariable(14,soaktemp,13,hun)
     buttonpress(NEXT,setsoaktemp)
-    
     
     
     ;SET SOAK TIME
@@ -380,16 +397,10 @@ main:
     Send_Constant_String(#stime)
     setsoaktime:
 	buttonpress(ADD_ONE, scroll1)
-    increment5(soaktime, hun1,#1)
+    increment5(soaktime, hun1,#5)
     scroll1:
-    Set_Cursor(1,14)
-    Display_BCD(soaktime)
-    Set_Cursor(1,13)
-	mov a, hun1
-	orl a, #0x30
-	lcall ?WriteData
+    displayvariable(14,soaktime,13,hun1)
     buttonpress(NEXT,setsoaktime)
-    
     
     
     ;SET REFLOW TEMPERATURE
@@ -399,12 +410,7 @@ main:
 	buttonpress(ADD_ONE, scroll2)
     increment5(reflowtemp, hun2,#5)
     scroll2:
-    Set_Cursor(1,14)
-    Display_BCD(reflowtemp)
-    Set_Cursor(1,13)
-	mov a, hun2
-	orl a, #0x30
-	lcall ?WriteData
+    displayvariable(14,reflowtemp,13,hun2)
     buttonpress(NEXT,setreflowtemp)
     
     
@@ -415,12 +421,7 @@ main:
 	buttonpress(ADD_ONE, scroll3)
     increment1(reflowtime, hun3,#1)
     scroll3:
-    Set_Cursor(1,14)
-    Display_BCD(reflowtime)
-    Set_Cursor(1,13)
-	mov a, hun3
-	orl a, #0x30
-	lcall ?WriteData
+    displayvariable(14,reflowtime,13,hun3)
     buttonpress(NEXT,setreflowtime)
     
 	
@@ -440,11 +441,12 @@ main:
     Set_Cursor(2,1)
     Send_Constant_String(#clear)
     ljmp redo
-    ;MOVING ON TO THE BAKING PROCESS
     yes:
 	Set_Cursor(2,1)
     Send_Constant_String(#selectyes)
     buttonpress(NEXT, final)
+    
+    ;MOVING ON TO THE BAKING PROCESS
     Set_Cursor(1,1)
     Send_Constant_String(#otemp)
     Set_Cursor(2,1)
@@ -453,165 +455,160 @@ main:
     mov second, #0
     
     
+    ;LOOP UPDATING REAL TIME TEMPERATURE
     forever1:
 	lcall forever
 	
 
+	;ONE BEEP EACH NEW STATE
+	mov a, statealarm
+    cjne a, state, nope
+    add a, #1
+    da a
+    mov statealarm, a
+    lcall beep
+    nope:
 	mov a, state
 	cjne a, #1, soak
 	
 	;USING TIMER 2 FOR BAKE CLOCK
-	Set_Cursor(1,11)
-    Display_BCD(second)
-    Set_Cursor(1,10)
-	mov a, hunsec
-	orl a, #0x30
-	lcall ?WriteData
-	
+	displayvariable(11,second,10,hunsec)
 	Set_Cursor(2,1)
 	Send_Constant_String(#state1dis)
-	
-	;someone set up beeping for entering first state
-	
-	
 
-	;someone do pwm thingy here
-	mov pwm+0, #low(1000) ;100%duty cycle (500/500ms = 100%)
+	;MAX POWER TO OVEN
+	mov pwm+0, #low(1000) 
 	mov pwm+1, #high(1000) 
 
 	mov a, second			;safety case
 	cjne a, #0x60, not60
+	mov a, hun
+	cjne a, #0, not60	
 	mov a, #0x50
 	subb a, bcd
 	jnc escape			;basically checking for overflow
 	sjmp not60
+
+	;DOESNT REACH 50C WITHIN 60 SEC
 	escape:
-	; someone turn of pwm temperatures here...
+	mov statealarm, #1
+	mov state, #1
+	mov pwm+0, #low(0) 
+	mov pwm+1, #high(0) 
 	ljmp redo
-	ret
 	
 	not60:
+	mov a, hun
+	cjne a, bcd+1, cont
 	mov a, soaktemp		;passes safety check. or 60 seconds have not passes. now checking for ramp to soak temp set earlier
 	cjne a, bcd, cont
-	
 	sjmp gogo
 	cont:
 	ljmp forever1
 	gogo:
 	mov state, #2
-	
-	
-	;add another beep for another state
-	
-	
 	mov second, #0
 	mov hunsec, #0
 	
 	soak:
 	mov a, state
 	cjne a, #2, ramptoreflow
-	Set_Cursor(1,11)
-    Display_BCD(second)
-    Set_Cursor(1,10)
-	mov a, hunsec
-	orl a, #0x30
-	lcall ?WriteData
+	;USING TIMER 2 FOR BAKE CLOCK
+	displayvariable(11,second,10,hunsec)
 	Set_Cursor(2,1)
 	Send_Constant_String(#state2dis)
-	mov pwm+0, #low(250) 
-	mov pwm+1, #high(250)
+	;SET OVEN TO MEDIUM POWER
+	mov pwm+0, #low(0) 
+	mov pwm+1, #high(0)
 	
-
+	;CHECKING IF SOAK TIME MET
+	mov a, hunsec
+	cjne a, hun1, cont
 	mov a, second
 	cjne a, soaktime, cont
 	
-	
+	;CONTINUE TO NEXT STATE RESET TIME
 	mov state, #3
 	mov second, #0
 	mov hunsec, #0
 	
 	
 	ramptoreflow:
-	
 	mov a, state
 	cjne a, #3, reflow
-		Set_Cursor(2,1)
+	;DISPLAYING TIME VARIABLE ONCE AGAIN
+	displayvariable(11,second,10,hunsec)
+	Set_Cursor(2,1)
 	Send_Constant_String(#state3dis)
-	
-	mov pwm+0, #low(1000) ;100%duty cycle (500/500ms = 100%)
+	;SETTING OVEN TO MAX POWER
+	mov pwm+0, #low(1000) 
 	mov pwm+1, #high(1000) 
-	
-	
-	Set_Cursor(1,11)
-    Display_BCD(second)
-    Set_Cursor(1,10)
-	mov a, hunsec
-	orl a, #0x30
-	lcall ?WriteData
-	
+	;CHECKING TO SEE IF RAMP TEMPERATURE MET
+	mov a, hun2
+	cjne a, bcd+1, cont1
 	mov a, bcd
 	cjne a, reflowtemp, cont1
-	
 	sjmp gogo1
 	cont1:
 	ljmp forever1
 	gogo1:
 
-	
-	
+	;MOVING ON TO NEXT STATE
 	mov state, #4
 	mov second, #0
 	mov hunsec, #0
 	
 	
 	reflow:
-	
 	mov a, state
 	cjne a, #4, coolmike
+	;DISPLAY TIME VARIABLE
+	displayvariable(11,second,10,hunsec)
 	Set_Cursor(2,1)
 	Send_Constant_String(#state4dis)
-	
-	mov pwm+0, #low(750) ;100%duty cycle (500/500ms = 100%)
-	mov pwm+1, #high(750) 
-	
-	
-	Set_Cursor(1,11)
-    Display_BCD(second)
-    Set_Cursor(1,10)
-	mov a, hunsec
-	orl a, #0x30
-	lcall ?WriteData
-	
+	;SET OVEN TO ABOVE MEDIUM POWER
+	mov pwm+0, #low(0)
+	mov pwm+1, #high(0) 
+	;CHECK IF REFLOW TIME MET
+	mov a, hun3
+	cjne a, hunsec, cont1
 	mov a, second
 	cjne a, reflowtime, cont1
 	
+	;MOVING ON TO COOL STATE
 	mov state, #5
 	mov second, #0
 	mov hunsec, #0
 	
 	coolmike:
-					; clear whenever it reaches 30 celsius
+	displayvariable(11,second,10,hunsec)
 	Set_Cursor(2,1)
 	Send_Constant_String(#state5dis)
-	
-	mov pwm+0, #low(0) ;100%duty cycle (500/500ms = 100%)
+	;TURN OFF OVEN
+	mov pwm+0, #low(0) 
 	mov pwm+1, #high(0) 
 	
 	
-	Set_Cursor(1,11)
-    Display_BCD(second)
-    Set_Cursor(1,10)
-	mov a, hunsec
-	orl a, #0x30
-	lcall ?WriteData
-	
+	;CHECKING IF COOL ENOUGH TO HANDEL
+	mov a, hun2
+	cjne a, bcd+1, cont2
 	mov a, bcd
 	cjne a, #0x30, cont2
 	
 	Set_Cursor(2,1)
-	Send_Constant_String(#clear)
+	Send_Constant_String(#coolenough1)
 	Set_Cursor(1,1)
-	Send_Constant_String(#clear)
+	Send_Constant_String(#coolenough)
+	lcall beep
+	lcall beep
+	lcall beep
+	lcall beep
+	lcall beep
+	lcall beep
+
+	
+	ending:
+	sjmp ending
 	;add beep sounds for letting the person know that its cool enough, like 30 celcisu
 	cont2:
     ljmp forever1 
